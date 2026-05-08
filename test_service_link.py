@@ -3,7 +3,7 @@ import time
 from selenium.webdriver.common.by import By
 
 # Set this to your React frontend URL for ServiceLink
-BASE_URL = "http://13.63.34.67:3000"
+BASE_URL = "[http://172.31.0.196:3000](http://172.31.0.196:3000)"
 
 # --- CATEGORY 1: Navigation & Loading (3 Tests) ---
 
