@@ -26,7 +26,7 @@ pipeline {
     post {
         always {
             // Mandatory requirement: Email test results to the collaborator
-            mail to: 'groza9899@gmail.com',
+            mail to: 'qasimalik@gmail.com',
                  subject: "DevOps-Assign3: Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
                  body: """The pipeline for ${env.JOB_NAME} has finished.
                  Result: ${currentBuild.currentResult}
