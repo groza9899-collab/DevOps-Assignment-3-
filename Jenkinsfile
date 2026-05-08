@@ -12,7 +12,7 @@ pipeline {
         stage('Fetch Backend Code') {
             steps {
                 checkout scm
-                echo "Fetching backend folder from cloud-web..."
+                echo "Fetching backend folder..."
                 sh "rm -rf temp_repo backend || true"
                 sh "git clone https://github.com/groza9899-collab/cloud-web.git temp_repo"
                 sh "cp -r temp_repo/backend ."
@@ -22,19 +22,20 @@ pipeline {
 
         stage('Lightweight Build') {
             steps {
-                echo "Building the base image..."
+                echo "Building base environment..."
                 sh "docker build -t ${IMAGE_NAME} ."
             }
         }
 
         stage('Run Selenium Tests') {
             steps {
-                echo "Mounting backend and running tests..."
+                echo "Installing dependencies and running tests..."
+                // ADDED 'python-multipart' to the install list
                 sh """
                 docker run --name ${TEST_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c '
-                python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic &&
+                python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic python-multipart &&
                 python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 & 
-                sleep 15 && 
+                sleep 20 && 
                 pytest test_service_link.py -v'
                 """
             }
@@ -44,10 +45,10 @@ pipeline {
             steps {
                 echo "Deploying live to Port 3000..."
                 sh "docker rm -f ${APP_CONTAINER} || true"
-                // FIXED: Changed single " to triple \"\"\" to allow multi-line commands
+                // ADDED 'python-multipart' here as well
                 sh """
                 docker run -d -p 3000:8000 --name ${APP_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c '
-                python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic &&
+                python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic python-multipart &&
                 python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000'
                 """
             }
@@ -56,11 +57,11 @@ pipeline {
 
     post {
         always {
-            echo "Cleanup..."
+            echo "Cleaning up..."
             sh "docker rm -f ${TEST_CONTAINER} || true"
             mail to: 'qasimalik@gmail.com',
                  subject: "DevOps Assignment - Build #${env.BUILD_NUMBER}: ${currentBuild.currentResult}",
-                 body: "Build #${env.BUILD_NUMBER} is ${currentBuild.currentResult}. URL: http://${AWS_IP}:3000"
+                 body: "Build #${env.BUILD_NUMBER} Result: ${currentBuild.currentResult}. URL: http://${AWS_IP}:3000"
         }
     }
 }
