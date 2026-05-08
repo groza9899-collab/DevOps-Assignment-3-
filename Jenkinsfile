@@ -13,7 +13,6 @@ pipeline {
             steps {
                 checkout scm
                 echo "Fetching backend folder from cloud-web..."
-                // We keep the backend folder OUTSIDE the Docker build to save RAM
                 sh "rm -rf temp_repo backend || true"
                 sh "git clone https://github.com/groza9899-collab/cloud-web.git temp_repo"
                 sh "cp -r temp_repo/backend ."
@@ -23,8 +22,7 @@ pipeline {
 
         stage('Lightweight Build') {
             steps {
-                echo "Building the base image (without heavy backend context)..."
-                // This builds just the environment, which we know your RAM can handle
+                echo "Building the base image..."
                 sh "docker build -t ${IMAGE_NAME} ."
             }
         }
@@ -32,7 +30,6 @@ pipeline {
         stage('Run Selenium Tests') {
             steps {
                 echo "Mounting backend and running tests..."
-                // We map the backend folder into the container using -v
                 sh """
                 docker run --name ${TEST_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c '
                 python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic &&
@@ -47,11 +44,12 @@ pipeline {
             steps {
                 echo "Deploying live to Port 3000..."
                 sh "docker rm -f ${APP_CONTAINER} || true"
-                // Persistent deployment using the same Volume mapping
-                sh "docker run -d -p 3000:8000 --name ${APP_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c '
+                // FIXED: Changed single " to triple \"\"\" to allow multi-line commands
+                sh """
+                docker run -d -p 3000:8000 --name ${APP_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c '
                 python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic &&
                 python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000'
-                "
+                """
             }
         }
     }
