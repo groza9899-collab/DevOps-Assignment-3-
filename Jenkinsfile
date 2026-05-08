@@ -23,19 +23,20 @@ pipeline {
         stage('Lightweight Build') {
             steps {
                 echo "Building base environment..."
+                // Builds the core environment (Python + Chrome) without the heavy backend files
                 sh "docker build -t ${IMAGE_NAME} ."
             }
         }
 
         stage('Run Selenium Tests') {
             steps {
-                echo "Installing dependencies and running tests..."
-                // ADDED 'python-multipart' to the install list
+                echo "Running internal tests on localhost:8000..."
                 sh """
                 docker run --name ${TEST_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c '
                 python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic python-multipart &&
                 python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 & 
                 sleep 20 && 
+                export BASE_URL=http://127.0.0.1:8000 &&
                 pytest test_service_link.py -v'
                 """
             }
@@ -45,23 +46,21 @@ pipeline {
             steps {
                 echo "Deploying live to Port 3000..."
                 sh "docker rm -f ${APP_CONTAINER} || true"
-                // ADDED 'python-multipart' here as well
                 sh """
                 docker run -d -p 3000:8000 --name ${APP_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c '
                 python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic python-multipart &&
                 python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000'
                 """
+                echo "Site should be live at http://${AWS_IP}:3000"
             }
         }
     }
 
     post {
         always {
-            echo "Cleaning up..."
+            echo "Cleaning up build container..."
             sh "docker rm -f ${TEST_CONTAINER} || true"
-            mail to: 'qasimalik@gmail.com',
-                 subject: "DevOps Assignment - Build #${env.BUILD_NUMBER}: ${currentBuild.currentResult}",
-                 body: "Build #${env.BUILD_NUMBER} Result: ${currentBuild.currentResult}. URL: http://${AWS_IP}:3000"
+            // EMAIL BLOCK REMOVED
         }
     }
 }
