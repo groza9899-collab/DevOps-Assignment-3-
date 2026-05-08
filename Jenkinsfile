@@ -9,10 +9,9 @@ pipeline {
     }
 
     stages {
-        stage('Fetch Backend Code') {
+        stage('Pull Code') {
             steps {
                 checkout scm
-                echo "Fetching backend folder..."
                 sh "rm -rf temp_repo backend || true"
                 sh "git clone https://github.com/groza9899-collab/cloud-web.git temp_repo"
                 sh "cp -r temp_repo/backend ."
@@ -22,45 +21,44 @@ pipeline {
 
         stage('Lightweight Build') {
             steps {
-                echo "Building base environment..."
-                // Builds the core environment (Python + Chrome) without the heavy backend files
+                // Build the core environment (Python + Chrome)
                 sh "docker build -t ${IMAGE_NAME} ."
             }
         }
 
         stage('Run Selenium Tests') {
             steps {
-                echo "Running internal tests on localhost:8000..."
+                echo "Force-fixing BASE_URL and running tests..."
                 sh """
-                docker run --name ${TEST_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c '
+                docker run --name ${TEST_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c "
                 python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic python-multipart &&
+                
+                # MAGIC FIX: Overwrite your hardcoded Private IP with Localhost Port 8000
+                sed -i 's|BASE_URL = .*|BASE_URL = \\"http://127.0.0.1:8000\\"|g' test_service_link.py &&
+                
                 python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 & 
                 sleep 20 && 
-                export BASE_URL=http://127.0.0.1:8000 &&
-                pytest test_service_link.py -v'
+                pytest test_service_link.py -v"
                 """
             }
         }
 
         stage('Deploy Application') {
             steps {
-                echo "Deploying live to Port 3000..."
+                echo "Deploying to Public URL: http://${AWS_IP}:3000"
                 sh "docker rm -f ${APP_CONTAINER} || true"
                 sh """
                 docker run -d -p 3000:8000 --name ${APP_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c '
                 python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic python-multipart &&
                 python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000'
                 """
-                echo "Site should be live at http://${AWS_IP}:3000"
             }
         }
     }
 
     post {
         always {
-            echo "Cleaning up build container..."
             sh "docker rm -f ${TEST_CONTAINER} || true"
-            // EMAIL BLOCK REMOVED
         }
     }
 }
