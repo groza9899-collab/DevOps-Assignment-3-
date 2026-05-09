@@ -1,39 +1,68 @@
 pipeline {
     agent any
+
     environment {
         IMAGE_NAME = "servicelink-app-image"
-        APP_CONTAINER = "servicelink-full-stack"
+        TEST_CONTAINER = "test-runner-${env.BUILD_NUMBER}"
+        APP_CONTAINER = "servicelink-web-app"
         AWS_IP = "13.63.34.67" 
     }
+
     stages {
-        stage('Pull Code') {
+        stage('Fetch Backend Code') {
             steps {
-                sh "rm -rf temp_repo backend frontend || true"
+                checkout scm
+                echo "Fetching backend folder from cloud-web..."
+                // We keep the backend folder OUTSIDE the Docker build to save RAM
+                sh "rm -rf temp_repo backend || true"
                 sh "git clone https://github.com/groza9899-collab/cloud-web.git temp_repo"
-                // Copy backend if it exists
-                sh "if [ -d temp_repo/backend ]; then cp -r temp_repo/backend .; fi"
-                // Copy frontend if it exists, otherwise just use the root
-                sh "if [ -d temp_repo/frontend ]; then cp -r temp_repo/frontend .; else cp -r temp_repo ./frontend; fi"
+                sh "cp -r temp_repo/backend ."
                 sh "rm -rf temp_repo"
             }
         }
-        stage('Build & Deploy') {
+
+        stage('Lightweight Build') {
             steps {
-                sh "docker rm -f ${APP_CONTAINER} || true"
+                echo "Building the base image (without heavy backend context)..."
+                // This builds just the environment, which we know your RAM can handle
                 sh "docker build -t ${IMAGE_NAME} ."
+            }
+        }
+
+        stage('Run Selenium Tests') {
+            steps {
+                echo "Mounting backend and running tests..."
+                // We map the backend folder into the container using -v
                 sh """
-                docker run -d -p 3000:8000 --name ${APP_CONTAINER} \
-                -v ${WORKSPACE}/backend:/app/backend \
-                ${IMAGE_NAME} /bin/sh -c '
-                pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic python-multipart &&
-                python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000'
+                docker run --name ${TEST_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c '
+                python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic &&
+                python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 & 
+                sleep 15 && 
+                pytest test_service_link.py -v'
                 """
             }
         }
+
+        stage('Deploy Application') {
+            steps {
+                echo "Deploying live to Port 3000..."
+                sh "docker rm -f ${APP_CONTAINER} || true"
+                // Persistent deployment using the same Volume mapping
+                sh "docker run -d -p 3000:8000 --name ${APP_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c '
+                python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic &&
+                python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000'
+                "
+            }
+        }
     }
+
     post {
         always {
-            echo "Deployment link: http://${AWS_IP}:3000/docs"
+            echo "Cleanup..."
+            sh "docker rm -f ${TEST_CONTAINER} || true"
+            mail to: 'qasimalik@gmail.com',
+                 subject: "DevOps Assignment - Build #${env.BUILD_NUMBER}: ${currentBuild.currentResult}",
+                 body: "Build #${env.BUILD_NUMBER} is ${currentBuild.currentResult}. URL: http://${AWS_IP}:3000"
         }
     }
 }
