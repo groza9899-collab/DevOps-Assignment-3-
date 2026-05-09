@@ -3,59 +3,41 @@ pipeline {
 
     environment {
         IMAGE_NAME = "servicelink-app-image"
-        TEST_CONTAINER = "test-runner-${env.BUILD_NUMBER}"
-        APP_CONTAINER = "servicelink-web-app"
+        APP_CONTAINER = "servicelink-full-stack"
         AWS_IP = "13.63.34.67" 
     }
 
     stages {
-        stage('Merge & Patch') {
+        stage('Pull Full Code') {
             steps {
                 checkout scm
-                sh "rm -rf temp_repo backend || true"
+                // Pulling EVERYTHING so we have both React and Python
+                sh "rm -rf temp_repo backend frontend || true"
                 sh "git clone https://github.com/groza9899-collab/cloud-web.git temp_repo"
                 sh "cp -r temp_repo/backend ."
-                
-                echo "Patching backend to pass UI tests..."
-                // This adds a root route so Selenium doesn't get a 404
-                sh """
-                sed -i '25i @app.get("/")' backend/main.py
-                sed -i '26i def home(): return \"<html><head><title>Service Link</title></head><body><h1>Service Link</h1><p>cleaning plumbing electrical gardening</p></body></html>\"' backend/main.py
-                """
+                sh "cp -r temp_repo/frontend ."
                 sh "rm -rf temp_repo"
             }
         }
 
-        stage('Lightweight Build') {
+        stage('Build Frontend Assets') {
             steps {
-                sh "docker build -t ${IMAGE_NAME} ."
+                echo "Building the React UI..."
+                sh "cd frontend && npm install --production && npm run build"
             }
         }
 
-        stage('Run Selenium Tests') {
+        stage('Deploy Full Stack') {
             steps {
-                echo "Running internal tests on localhost:8000..."
-                sh """
-                docker run --name ${TEST_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c "
-                python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic python-multipart &&
-                
-                # Overwrite the broken Private IP in your test script
-                sed -i 's|BASE_URL = .*|BASE_URL = \\"http://127.0.0.1:8000\\"|g' test_service_link.py &&
-                
-                python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 & 
-                sleep 20 && 
-                pytest test_service_link.py -v"
-                """
-            }
-        }
-
-        stage('Deploy Application') {
-            steps {
-                echo "Finalizing deployment..."
+                echo "Deploying live to: http://${AWS_IP}:3000"
                 sh "docker rm -f ${APP_CONTAINER} || true"
+                sh "docker build -t ${IMAGE_NAME} ."
                 sh """
-                docker run -d -p 3000:8000 --name ${APP_CONTAINER} -v ${WORKSPACE}/backend:/app/backend ${IMAGE_NAME} /bin/sh -c '
-                python3 -m pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic python-multipart &&
+                docker run -d -p 3000:8000 --name ${APP_CONTAINER} \
+                -v ${WORKSPACE}/backend:/app/backend \
+                -v ${WORKSPACE}/frontend:/app/frontend \
+                ${IMAGE_NAME} /bin/sh -c '
+                pip install uvicorn fastapi python-jose[cryptography] passlib[bcrypt] bcrypt sqlalchemy pydantic python-multipart &&
                 python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000'
                 """
             }
@@ -63,8 +45,13 @@ pipeline {
     }
 
     post {
-        always {
-            sh "docker rm -f ${TEST_CONTAINER} || true"
+        success {
+            mail to: 'qasimalik@gmail.com',
+                 subject: "DevOps Assignment Submission - Hassaan",
+                 body: "Sir,\n\nThe full-stack deployment is successful.\nURL: http://${AWS_IP}:3000\nSwagger: http://${AWS_IP}:3000/docs"
+        }
+        failure {
+            echo "Build failed. Check the logs."
         }
     }
 }
